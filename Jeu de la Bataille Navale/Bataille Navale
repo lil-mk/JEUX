@@ -1,0 +1,223 @@
+import tkinter as tk
+from tkinter import messagebox
+from enum import Enum
+import random
+
+
+class CellState(Enum):
+    EMPTY = "empty"
+    SHIP = "ship"
+    HIT = "hit"
+    MISS = "miss"
+    SUNK = "sunk"
+
+
+class Ship:
+    def __init__(self, name, size):
+        self.name = name
+        self.size = size
+        self.positions = []  # Liste des positions (x, y) occupées par le navire
+        self.hits = []  # Liste des positions touchées
+
+    def is_sunk(self):
+        return len(self.hits) == self.size
+
+
+class Board:
+    def __init__(self, size=10):
+        self.size = size
+        self.grid = [[CellState.EMPTY for _ in range(size)] for _ in range(size)]
+        self.ships = []
+
+    def place_ship(self, ship, start_x, start_y, is_horizontal):
+        # Vérifier si le placement est valide
+        if is_horizontal:
+            if start_x + ship.size > self.size:
+                return False
+            for x in range(start_x, start_x + ship.size):
+                if self.grid[start_y][x] != CellState.EMPTY:
+                    return False
+            # Placer le navire
+            for x in range(start_x, start_x + ship.size):
+                self.grid[start_y][x] = CellState.SHIP
+                ship.positions.append((x, start_y))
+        else:
+            if start_y + ship.size > self.size:
+                return False
+            for y in range(start_y, start_y + ship.size):
+                if self.grid[y][start_x] != CellState.EMPTY:
+                    return False
+            # Placer le navire
+            for y in range(start_y, start_y + ship.size):
+                self.grid[y][start_x] = CellState.SHIP
+                ship.positions.append((start_x, y))
+
+        self.ships.append(ship)
+        return True
+
+    def receive_shot(self, x, y):
+        if self.grid[y][x] == CellState.SHIP:
+            self.grid[y][x] = CellState.HIT
+            # Mettre à jour le navire touché
+            for ship in self.ships:
+                if (x, y) in ship.positions:
+                    ship.hits.append((x, y))
+                    if ship.is_sunk():
+                        # Marquer toutes les positions du navire comme coulé
+                        for pos_x, pos_y in ship.positions:
+                            self.grid[pos_y][pos_x] = CellState.SUNK
+                    return True, ship.is_sunk()
+        elif self.grid[y][x] == CellState.EMPTY:
+            self.grid[y][x] = CellState.MISS
+        return False, False
+
+
+class BattleshipGame:
+    def __init__(self):
+        self.window = tk.Tk()
+        self.window.title("Bataille Navale")
+        self.player_board = Board()
+        self.computer_board = Board()
+        self.setup_gui()
+        self.current_ship_index = 0
+        self.ships_to_place = [
+            Ship("Porte-avions", 5),
+            Ship("Croiseur", 4),
+            Ship("Destroyer 1", 3),
+            Ship("Destroyer 2", 3),
+            Ship("Sous-marin 1", 2),
+            Ship("Sous-marin 2", 2),
+        ]
+        self.is_player_turn = True
+        self.game_started = False
+
+    def setup_gui(self):
+        # Création des plateaux de jeu
+        self.create_board_frame("Votre plateau", self.player_board, True)
+        self.create_board_frame("Plateau adversaire", self.computer_board, False)
+
+        # Panneau de contrôle
+        control_frame = tk.Frame(self.window)
+        control_frame.pack(pady=10)
+
+        self.orientation_var = tk.BooleanVar(value=True)
+        tk.Radiobutton(control_frame, text="Horizontal", variable=self.orientation_var,
+                       value=True).pack(side=tk.LEFT)
+        tk.Radiobutton(control_frame, text="Vertical", variable=self.orientation_var,
+                       value=False).pack(side=tk.LEFT)
+
+        tk.Button(control_frame, text="Nouvelle Partie",
+                  command=self.new_game).pack(side=tk.LEFT, padx=10)
+
+    def create_board_frame(self, title, board, is_player):
+        frame = tk.LabelFrame(self.window, text=title)
+        frame.pack(side=tk.LEFT, padx=20, pady=10)
+
+        buttons = []
+        for i in range(board.size):
+            row = []
+            for j in range(board.size):
+                btn = tk.Button(frame, width=2, height=1,
+                                command=lambda x=j, y=i: self.cell_clicked(x, y, is_player))
+                btn.grid(row=i, column=j)
+                row.append(btn)
+            buttons.append(row)
+
+        if is_player:
+            self.player_buttons = buttons
+        else:
+            self.computer_buttons = buttons
+
+    def cell_clicked(self, x, y, is_player_board):
+        if is_player_board and not self.game_started:
+            self.try_place_ship(x, y)
+        elif not is_player_board and self.game_started and self.is_player_turn:
+            self.player_shoot(x, y)
+
+    def try_place_ship(self, x, y):
+        if self.current_ship_index >= len(self.ships_to_place):
+            return
+
+        ship = self.ships_to_place[self.current_ship_index]
+        if self.player_board.place_ship(ship, x, y, self.orientation_var.get()):
+            self.update_board_display(True)
+            self.current_ship_index += 1
+
+            if self.current_ship_index >= len(self.ships_to_place):
+                self.place_computer_ships()
+                self.game_started = True
+                messagebox.showinfo("Début de la partie", "Tous les navires sont placés. La partie peut commencer!")
+
+    def place_computer_ships(self):
+        for ship in self.ships_to_place:
+            placed = False
+            while not placed:
+                x = random.randint(0, 9)
+                y = random.randint(0, 9)
+                is_horizontal = random.choice([True, False])
+                new_ship = Ship(ship.name, ship.size)
+                placed = self.computer_board.place_ship(new_ship, x, y, is_horizontal)
+
+    def player_shoot(self, x, y):
+        if not self.is_player_turn:
+            return
+
+        hit, sunk = self.computer_board.receive_shot(x, y)
+        self.update_board_display(False)
+
+        if sunk:
+            messagebox.showinfo("Navire coulé!", "Vous avez coulé un navire ennemi!")
+
+        self.is_player_turn = False
+        self.window.after(1000, self.computer_turn)
+
+    def computer_turn(self):
+        while True:
+            x = random.randint(0, 9)
+            y = random.randint(0, 9)
+            if self.player_board.grid[y][x] in [CellState.EMPTY, CellState.SHIP]:
+                hit, sunk = self.player_board.receive_shot(x, y)
+                self.update_board_display(True)
+
+                if sunk:
+                    messagebox.showinfo("Navire coulé!", "L'ordinateur a coulé un de vos navires!")
+
+                self.is_player_turn = True
+                break
+
+    def update_board_display(self, is_player_board):
+        board = self.player_board if is_player_board else self.computer_board
+        buttons = self.player_buttons if is_player_board else self.computer_buttons
+
+        for y in range(board.size):
+            for x in range(board.size):
+                state = board.grid[y][x]
+                btn = buttons[y][x]
+
+                if state == CellState.EMPTY:
+                    btn.configure(bg='white')
+                elif state == CellState.SHIP and is_player_board:
+                    btn.configure(bg='gray')
+                elif state == CellState.HIT:
+                    btn.configure(bg='red')
+                elif state == CellState.MISS:
+                    btn.configure(bg='blue')
+                elif state == CellState.SUNK:
+                    btn.configure(bg='black')
+
+    def new_game(self):
+        self.player_board = Board()
+        self.computer_board = Board()
+        self.current_ship_index = 0
+        self.game_started = False
+        self.is_player_turn = True
+        self.update_board_display(True)
+        self.update_board_display(False)
+
+    def run(self):
+        self.window.mainloop()
+
+
+if __name__ == "__main__":
+    game = BattleshipGame()
+    game.run()
